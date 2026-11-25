@@ -1,4 +1,4 @@
-import { formatTime, initPhysics, runReplay, TEST_TRACK, type FixtureFile, type Replay } from '@raceleague/shared';
+import { formatTime, initPhysics, runReplay, trackById, type FixtureFile, type Replay } from '@raceleague/shared';
 import fixtureFile from '@raceleague/shared/fixtures/replays.json';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -9,7 +9,7 @@ async function main() {
   const rows = $('rows');
   let allOk = true;
   for (const f of fixtures) {
-    const r = runReplay(f.replay, TEST_TRACK);
+    const r = runReplay(f.replay, trackById(f.replay.trackId)!);
     const ok = r.stateHash === f.expected.stateHash && r.finishTick === f.expected.finishTick && r.ticks === f.expected.ticks;
     allOk &&= ok;
     const tr = document.createElement('tr');
@@ -37,7 +37,9 @@ async function main() {
     const out = $('file-result');
     try {
       const replay = JSON.parse(await file.text()) as Replay;
-      const r = runReplay(replay, TEST_TRACK);
+      const track = trackById(replay.trackId);
+      if (!track) throw new Error(`Circuit inconnu : ${replay.trackId}`);
+      const r = runReplay(replay, track);
       out.textContent = `Temps : ${r.timeMs === null ? 'pas fini' : formatTime(r.timeMs)}\nPas : ${r.ticks}\nEmpreinte : ${r.stateHash}`;
     } catch (err) {
       out.textContent = `Erreur : ${(err as Error).message}`;

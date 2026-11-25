@@ -7,7 +7,7 @@
  */
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { formatTime, initPhysics, runReplay, TEST_TRACK, type FixtureFile, type Replay } from '@raceleague/shared';
+import { formatTime, initPhysics, runReplay, trackById, type FixtureFile, type Replay } from '@raceleague/shared';
 
 await initPhysics();
 const files = process.argv.slice(2);
@@ -16,7 +16,9 @@ const list: { name: string; replay: Replay }[] = files.length
   : (createRequire(import.meta.url)('@raceleague/shared/fixtures/replays.json') as FixtureFile).fixtures;
 
 for (const { name, replay } of list) {
-  const r = runReplay(replay, TEST_TRACK);
-  const time = r.timeMs === null ? (r.fell ? 'chute' : 'pas fini') : formatTime(r.timeMs);
-  console.log(`${name}\n  temps : ${time}\n  pas : ${r.ticks}\n  empreinte : ${r.stateHash}`);
+  const track = trackById(replay.trackId);
+  if (!track) throw new Error(`Circuit inconnu : ${replay.trackId}`);
+  const r = runReplay(replay, track);
+  const time = r.timeMs === null ? 'pas fini' : formatTime(r.timeMs);
+  console.log(`${name}\n  circuit : ${track.name}\n  temps : ${time}\n  chutes : ${r.respawns}\n  empreinte : ${r.stateHash}`);
 }
