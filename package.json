@@ -1,0 +1,17 @@
+{
+  "name": "raceleague",
+  "private": true,
+  "type": "module",
+  "workspaces": ["packages/shared", "packages/client", "packages/server"],
+  "scripts": {
+    "dev": "npm run dev -w @raceleague/client",
+    "build": "npm run build -w @raceleague/client",
+    "test": "npm test -w @raceleague/shared",
+    "typecheck": "tsc -p packages/shared && tsc -p packages/client && tsc -p packages/server",
+    "replay": "npm run replay -w @raceleague/server --",
+    "fixtures": "npm run fixtures -w @raceleague/shared"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3"
+  }
+}

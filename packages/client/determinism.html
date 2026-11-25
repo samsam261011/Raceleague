@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>RaceLeague · test des replays</title>
+    <link rel="stylesheet" href="/src/determinism.css" />
+  </head>
+  <body>
+    <main>
+      <h1>Test des replays</h1>
+      <p>Cette page rejoue les 3 replays de référence et compare le résultat à celui calculé par Node. Ouvre-la sur PC et sur téléphone : tout doit être vert.</p>
+      <div id="verdict">Calcul…</div>
+      <table>
+        <thead><tr><th>Replay</th><th>Temps</th><th>Pas</th><th>Empreinte</th><th>Attendu</th><th></th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+      <h2>Rejouer un fichier</h2>
+      <p>Choisis un replay téléchargé depuis le jeu pour afficher son temps et son empreinte, à comparer avec <code>npm run replay</code>.</p>
+      <input type="file" id="file" accept=".json,application/json" />
+      <pre id="file-result"></pre>
+      <p class="env" id="env"></p>
+      <p><a href="./">← retour au jeu</a></p>
+    </main>
+    <script type="module" src="/src/determinism.ts"></script>
+  </body>
+</html>
