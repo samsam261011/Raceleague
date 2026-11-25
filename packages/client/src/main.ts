@@ -177,6 +177,11 @@ function frame(now: number) {
   renderer.render(scene, camera);
 }
 
-await initPhysics();
-reset();
-requestAnimationFrame(frame);
+try {
+  await initPhysics();
+  reset();
+  requestAnimationFrame(frame);
+} catch (err) {
+  $('timer').textContent = 'Erreur';
+  $('speed').textContent = `Le moteur physique n'a pas pu démarrer : ${(err as Error).message}`;
+}

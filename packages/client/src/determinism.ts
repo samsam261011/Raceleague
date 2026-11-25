@@ -45,4 +45,9 @@ async function main() {
   });
 }
 
-main();
+main().catch((err) => {
+  const v = $('verdict');
+  v.textContent = `Erreur : ${(err as Error).message}`;
+  v.className = 'ko';
+  document.body.dataset.result = 'error';
+});
