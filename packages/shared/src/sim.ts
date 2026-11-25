@@ -11,7 +11,7 @@ import { fnv1a, hex } from './hash.ts';
  * - toute la physique passe par la version déterministe de Rapier.
  * Changer le comportement de la voiture => incrémenter SIM_VERSION.
  */
-export const SIM_VERSION = 2;
+export const SIM_VERSION = 3;
 export const TICK_RATE = 60;
 export const DT = 1 / TICK_RATE;
 /** Une run qui dure plus longtemps est arrêtée (5 minutes). */
