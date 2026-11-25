@@ -1,0 +1,21 @@
+{
+  "name": "@raceleague/shared",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./fixtures/replays.json": "./fixtures/replays.json"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "fixtures": "tsx test/make-fixtures.ts"
+  },
+  "dependencies": {
+    "@dimforge/rapier3d-deterministic-compat": "0.21.0"
+  },
+  "devDependencies": {
+    "tsx": "4.23.15",
+    "vitest": "3.2.7",
+    "@types/node": "22.20.7"
+  }
+}
