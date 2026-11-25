@@ -49,15 +49,23 @@ export const CAR = {
   /** Braquage max à l'arrêt (rad), réduit avec la vitesse. */
   steerMax: 0.5,
   steerSpeedFalloff: 25,
-  /** Vitesse de rotation du volant, en rad par pas. */
+  /** Vitesse de rotation du volant, en rad par pas : plus lente à haute vitesse. */
   steerRate: 0.06,
+  steerRateSpeedFalloff: 30,
+  /** Retour du volant au centre, en rad par pas (plus rapide, pour doser par petites touches). */
+  steerReturnRate: 0.09,
   maxSpeed: 45,
   /**
-   * Drift : freiner en tournant au-dessus de driftMinSpeed fait décrocher
-   * l'arrière. Le drift continue tant qu'on tourne et qu'on garde de la
-   * vitesse, même en réaccélérant ; il s'arrête quand on lâche la direction.
+   * Drift : quand on prend un virage trop vite, l'arrière décroche.
+   * La « demande » d'adhérence vaut vitesse² × braquage ÷ empattement
+   * (l'accélération latérale que le virage réclame, en m/s²). Au-delà de
+   * gripLimit, la voiture part en drift : il faut freiner avant le virage
+   * ou braquer par petites touches pour rester sous la limite.
+   * Le drift s'arrête quand la demande redescend sous gripRecover × limite,
+   * quand on lâche la direction ou quand la voiture est trop lente.
    */
-  driftMinSpeed: 14,
+  gripLimit: 90,
+  gripRecover: 0.55,
   driftKeepSpeed: 8,
   /** Adhérence latérale de l'arrière en plein drift (1 = normale). */
   driftRearGrip: 0.2,
@@ -66,7 +74,7 @@ export const CAR = {
   /** Vitesse d'entrée et de sortie du drift, par pas. */
   driftBlendIn: 0.12,
   driftBlendOut: 0.05,
-  /** En drift, le frein ralentit beaucoup moins (il sert à déclencher). */
+  /** En drift, le frein ralentit moins, pour ne pas casser la glisse. */
   driftBrakeFactor: 0.15,
   gravity: -20,
 } as const;
@@ -92,6 +100,8 @@ export class Simulation {
   /** 0 = adhérence normale, 1 = plein drift. */
   drift = 0;
   private drifting = false;
+  /** Demande d'adhérence ÷ limite : au-dessus de 1, la voiture décroche. */
+  gripDemand = 0;
 
   constructor(track: Track) {
     this.track = track;
@@ -164,9 +174,13 @@ export class Simulation {
 
     const turning = left !== right;
 
-    // Drift : déclenché par frein + virage à vitesse suffisante
-    if (!this.drifting && turning && down && speed > CAR.driftMinSpeed) this.drifting = true;
-    else if (this.drifting && (!turning || speed < CAR.driftKeepSpeed)) this.drifting = false;
+    // Drift : déclenché quand le virage demande plus d'adhérence que la limite
+    const absSteer = this.steer < 0 ? -this.steer : this.steer;
+    const demand = (speed * speed * absSteer) / (2 * CAR.wheelX);
+    const limit = CAR.gripLimit;
+    this.gripDemand = demand / limit;
+    if (!this.drifting && turning && speed > CAR.driftKeepSpeed && demand > limit) this.drifting = true;
+    else if (this.drifting && (!turning || speed < CAR.driftKeepSpeed || demand < limit * CAR.gripRecover)) this.drifting = false;
     if (this.drifting) this.drift = Math.min(1, this.drift + CAR.driftBlendIn);
     else this.drift = Math.max(0, this.drift - CAR.driftBlendOut);
 
@@ -183,8 +197,12 @@ export class Simulation {
     const gripSteer = CAR.steerMax / (1 + absSpeed / CAR.steerSpeedFalloff);
     const maxSteer = gripSteer + (CAR.driftSteerMax - gripSteer) * this.drift;
     const target = left === right ? 0 : left ? maxSteer : -maxSteer;
-    if (this.steer < target) this.steer = Math.min(target, this.steer + CAR.steerRate);
-    else if (this.steer > target) this.steer = Math.max(target, this.steer - CAR.steerRate);
+    const buildRate = CAR.steerRate / (1 + absSpeed / CAR.steerRateSpeedFalloff);
+    // On revient vers le centre plus vite qu'on ne braque
+    const towardCenter = (target >= 0 && this.steer < 0) || (target <= 0 && this.steer > 0) || target === 0;
+    const rate = towardCenter ? CAR.steerReturnRate : buildRate;
+    if (this.steer < target) this.steer = Math.min(target, this.steer + rate);
+    else if (this.steer > target) this.steer = Math.max(target, this.steer - rate);
 
     v.setWheelSteering(FRONT_LEFT, this.steer);
     v.setWheelSteering(FRONT_RIGHT, this.steer);

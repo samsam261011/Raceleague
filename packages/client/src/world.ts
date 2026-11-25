@@ -27,7 +27,8 @@ function rng(seed: number) {
 
 const flat = (color: number) => new THREE.MeshLambertMaterial({ color, flatShading: true });
 
-export function buildTrack(scene: THREE.Scene, track: Track) {
+export function buildTrack(track: Track): THREE.Group {
+  const scene = new THREE.Group();
   for (const b of track.blocks) {
     const geo = new THREE.BoxGeometry(b.half[0] * 2, b.half[1] * 2, b.half[2] * 2);
     let mat: THREE.Material;
@@ -58,6 +59,7 @@ export function buildTrack(scene: THREE.Scene, track: Track) {
   start.rotation.x = -Math.PI / 2;
   start.position.set(track.start[0] - 2, 0.01, track.start[2]);
   scene.add(start);
+  return scene;
 }
 
 function kerbMaterial(length: number) {

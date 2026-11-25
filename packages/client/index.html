@@ -16,7 +16,8 @@
     <div id="mode" hidden>REPLAY</div>
     <button id="focus-hint" hidden>Clique ici pour jouer au clavier</button>
     <button id="restart" class="ui-btn" aria-label="Recommencer">↻</button>
-    <div id="help">Flèches / ZQSD / WASD pour conduire · frein + virage à haute vitesse pour drifter · R pour recommencer</div>
+    <button id="open-menu" class="ui-btn" aria-label="Menu">☰</button>
+    <div id="help">Flèches / ZQSD / WASD pour conduire · trop vite dans un virage = drift · R pour recommencer · Échap pour le menu</div>
     <div id="touch">
       <div class="pad left">
         <button data-key="left" aria-label="Gauche">◀</button>
@@ -36,10 +37,59 @@
           <button id="btn-again">Rejouer (Entrée)</button>
           <button id="btn-watch">Voir le replay</button>
           <button id="btn-download">Télécharger le replay</button>
+          <button id="btn-finish-menu">Menu</button>
         </div>
       </div>
     </div>
-    <a id="debug-link" href="./determinism.html">test des replays</a>
+    <div id="menu" class="screen" hidden>
+      <section id="screen-main" class="panel main">
+        <div class="main-top">
+          <h1 class="logo"><span>Race</span>League</h1>
+          <p class="tagline">Contre-la-montre au-dessus des canyons</p>
+        </div>
+        <div class="main-bottom">
+        <nav class="menu-buttons">
+          <button id="btn-play" class="primary">Jouer</button>
+          <button id="btn-tracks">Circuits</button>
+          <button id="btn-options">Options</button>
+        </nav>
+        <a id="debug-link" href="./determinism.html">test des replays</a>
+        </div>
+      </section>
+      <section id="screen-tracks" class="panel" hidden>
+        <header class="panel-head">
+          <button class="back" data-back aria-label="Retour">←</button>
+          <h2>Circuits</h2>
+        </header>
+        <div id="track-grid" class="track-grid"></div>
+      </section>
+      <section id="screen-options" class="panel" hidden>
+        <header class="panel-head">
+          <button class="back" data-back aria-label="Retour">←</button>
+          <h2>Options</h2>
+        </header>
+        <div class="options">
+          <div class="option">
+            <div><div class="opt-label">Son</div><div class="opt-note">Les sons arrivent en semaine 4</div></div>
+            <div class="seg" data-option="sound">
+              <button data-value="on">Activé</button><button data-value="off">Coupé</button>
+            </div>
+          </div>
+          <div class="option">
+            <div><div class="opt-label">Qualité graphique</div><div class="opt-note">Basse : sans ombres, plus fluide sur les petits téléphones</div></div>
+            <div class="seg" data-option="quality">
+              <button data-value="high">Haute</button><button data-value="low">Basse</button>
+            </div>
+          </div>
+          <div class="option">
+            <div><div class="opt-label">Boutons tactiles</div><div class="opt-note">Auto : affichés sur téléphone et tablette</div></div>
+            <div class="seg" data-option="touch">
+              <button data-value="auto">Auto</button><button data-value="show">Affichés</button><button data-value="hide">Masqués</button>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
