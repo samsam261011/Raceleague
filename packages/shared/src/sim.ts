@@ -11,7 +11,7 @@ import { fnv1a, hex } from './hash.ts';
  * - toute la physique passe par la version déterministe de Rapier.
  * Changer le comportement de la voiture => incrémenter SIM_VERSION.
  */
-export const SIM_VERSION = 1;
+export const SIM_VERSION = 2;
 export const TICK_RATE = 60;
 export const DT = 1 / TICK_RATE;
 /** Une run qui dure plus longtemps est arrêtée (5 minutes). */
@@ -42,7 +42,7 @@ export const CAR = {
   suspensionRelaxation: 5,
   maxSuspensionForce: 100000,
   frictionSlip: 4,
-  sideFrictionStiffness: 1.2,
+  sideFrictionStiffness: 0.8,
   engineForce: 1500,
   reverseForce: 700,
   brakeForce: 60,
@@ -52,6 +52,22 @@ export const CAR = {
   /** Vitesse de rotation du volant, en rad par pas. */
   steerRate: 0.06,
   maxSpeed: 45,
+  /**
+   * Drift : freiner en tournant au-dessus de driftMinSpeed fait décrocher
+   * l'arrière. Le drift continue tant qu'on tourne et qu'on garde de la
+   * vitesse, même en réaccélérant ; il s'arrête quand on lâche la direction.
+   */
+  driftMinSpeed: 14,
+  driftKeepSpeed: 8,
+  /** Adhérence latérale de l'arrière en plein drift (1 = normale). */
+  driftRearGrip: 0.2,
+  /** Braquage max en drift, pour pouvoir contre-braquer. */
+  driftSteerMax: 0.45,
+  /** Vitesse d'entrée et de sortie du drift, par pas. */
+  driftBlendIn: 0.12,
+  driftBlendOut: 0.05,
+  /** En drift, le frein ralentit beaucoup moins (il sert à déclencher). */
+  driftBrakeFactor: 0.15,
   gravity: -20,
 } as const;
 
@@ -73,6 +89,9 @@ export class Simulation {
   private body: RAPIER.RigidBody;
   private vehicle: RAPIER.DynamicRayCastVehicleController;
   private steer = 0;
+  /** 0 = adhérence normale, 1 = plein drift. */
+  drift = 0;
+  private drifting = false;
 
   constructor(track: Track) {
     this.track = track;
@@ -143,17 +162,26 @@ export class Simulation {
     const left = (keys & KEY_LEFT) !== 0;
     const right = (keys & KEY_RIGHT) !== 0;
 
+    const turning = left !== right;
+
+    // Drift : déclenché par frein + virage à vitesse suffisante
+    if (!this.drifting && turning && down && speed > CAR.driftMinSpeed) this.drifting = true;
+    else if (this.drifting && (!turning || speed < CAR.driftKeepSpeed)) this.drifting = false;
+    if (this.drifting) this.drift = Math.min(1, this.drift + CAR.driftBlendIn);
+    else this.drift = Math.max(0, this.drift - CAR.driftBlendOut);
+
     let engine = 0;
     let brake = 0;
     if (up && !down) engine = speed < CAR.maxSpeed ? CAR.engineForce : 0;
     else if (down && !up) {
-      if (speed > 1) brake = CAR.brakeForce;
+      if (speed > 1) brake = CAR.brakeForce * (this.drifting ? CAR.driftBrakeFactor : 1);
       else engine = -CAR.reverseForce;
     } else if (!up && !down) brake = 2; // frein moteur léger
 
     // Braquage progressif, réduit avec la vitesse (uniquement + − × ÷).
     const absSpeed = speed < 0 ? -speed : speed;
-    const maxSteer = CAR.steerMax / (1 + absSpeed / CAR.steerSpeedFalloff);
+    const gripSteer = CAR.steerMax / (1 + absSpeed / CAR.steerSpeedFalloff);
+    const maxSteer = gripSteer + (CAR.driftSteerMax - gripSteer) * this.drift;
     const target = left === right ? 0 : left ? maxSteer : -maxSteer;
     if (this.steer < target) this.steer = Math.min(target, this.steer + CAR.steerRate);
     else if (this.steer > target) this.steer = Math.max(target, this.steer - CAR.steerRate);
@@ -162,6 +190,8 @@ export class Simulation {
     v.setWheelSteering(FRONT_RIGHT, this.steer);
     for (let i = 2; i < 4; i++) v.setWheelEngineForce(i, engine);
     for (let i = 0; i < 4; i++) v.setWheelBrake(i, brake);
+    const rearGrip = CAR.sideFrictionStiffness * (1 - (1 - CAR.driftRearGrip) * this.drift);
+    for (let i = 2; i < 4; i++) v.setWheelSideFrictionStiffness(i, rearGrip);
 
     v.updateVehicle(DT);
     this.world.step();
@@ -178,6 +208,16 @@ export class Simulation {
     ) {
       this.finishTick = this.tick;
     }
+  }
+
+  /** Vitesse latérale (m/s) : forte quand la voiture glisse. Pour l'affichage et les tests. */
+  get lateralSpeed(): number {
+    const r = this.body.rotation();
+    const l = this.body.linvel();
+    // Axe −Z local (gauche) tourné par le quaternion
+    const lx = -2 * (r.x * r.z + r.w * r.y);
+    const lz = -(1 - 2 * (r.x * r.x + r.y * r.y));
+    return l.x * lx + l.z * lz;
   }
 
   chassisPose(): Pose {
@@ -202,7 +242,7 @@ export class Simulation {
     const r = this.body.rotation();
     const l = this.body.linvel();
     const a = this.body.angvel();
-    const f = new Float32Array([t.x, t.y, t.z, r.x, r.y, r.z, r.w, l.x, l.y, l.z, a.x, a.y, a.z, this.steer]);
+    const f = new Float32Array([t.x, t.y, t.z, r.x, r.y, r.z, r.w, l.x, l.y, l.z, a.x, a.y, a.z, this.steer, this.drift]);
     const i = new Int32Array([this.tick, this.finishTick ?? -1, this.fell ? 1 : 0]);
     return hex(fnv1a(new Uint8Array(i.buffer), fnv1a(new Uint8Array(f.buffer))));
   }

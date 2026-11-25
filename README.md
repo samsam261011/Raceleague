@@ -13,7 +13,7 @@ npm run replay -- mon-replay.json   # rejoue un replay téléchargé depuis le j
 npm run build      # build de production dans packages/client/dist
 ```
 
-Commandes : flèches, ZQSD ou WASD pour conduire, R ou Retour arrière pour recommencer, Entrée pour relancer après l'arrivée. Sur téléphone, des boutons tactiles s'affichent.
+Commandes : flèches, ZQSD ou WASD pour conduire, R ou Retour arrière pour recommencer, Entrée pour relancer après l'arrivée. Pour drifter : freiner en tournant à haute vitesse, puis réaccélérer en gardant la direction. Sur téléphone, des boutons tactiles s'affichent.
 
 ## Structure
 
