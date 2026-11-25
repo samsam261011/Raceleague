@@ -1,11 +1,11 @@
 import * as THREE from 'three';
-import { CAR, type CompiledTrack, type Gate, type Mat } from '@raceleague/shared';
+import { CAR, KERB, ROAD_HALF, type CompiledTrack, type Gate, type Mat } from '@raceleague/shared';
 
 /** Palette canyon. Tout est généré en code : aucun fichier de modèle. */
 export const COLORS = {
   sky: 0xf2b27a,
   fog: 0xe9a571,
-  asphalt: 0x3b3433,
+  asphalt: 0x8a8682,
   line: 0xf4ede4,
   kerbRed: 0xd6402e,
   kerbWhite: 0xf4ede4,
@@ -57,7 +57,7 @@ export function buildTrack(c: CompiledTrack): TrackView {
       const v = strip.quads;
       // Deux triangles par quadrilatère : 0-1-2 et 0-2-3
       for (const k of [0, 1, 2, 0, 2, 3]) pos.push(v[q + k * 3]!, v[q + k * 3 + 1]!, v[q + k * 3 + 2]!);
-      quadColor(strip.mat, strip.stripe[s]!, color).convertSRGBToLinear();
+      quadColor(strip.mat, strip.stripe[s]!, color); // setHex convertit déjà en couleurs linéaires
       for (let k = 0; k < 6; k++) col.push(color.r, color.g, color.b);
     }
   }
@@ -71,7 +71,7 @@ export function buildTrack(c: CompiledTrack): TrackView {
 
   // Ligne de départ
   const s = c.start;
-  const startLine = new THREE.Mesh(new THREE.PlaneGeometry(1, 14), new THREE.MeshBasicMaterial({ color: COLORS.line }));
+  const startLine = new THREE.Mesh(new THREE.PlaneGeometry(1.2, (ROAD_HALF + KERB) * 2), new THREE.MeshBasicMaterial({ color: COLORS.line }));
   startLine.rotation.set(-Math.PI / 2, 0, (s.r * Math.PI) / 2);
   startLine.position.set(s.p[0], s.p[1] - 0.79, s.p[2]);
   group.add(startLine);
@@ -87,8 +87,8 @@ export function buildTrack(c: CompiledTrack): TrackView {
 /** Arche au-dessus d'une porte : poteaux et bandeau (damier pour l'arrivée). */
 function buildArch(g: Gate, finish: boolean): THREE.Group {
   const arch = new THREE.Group();
-  const across = 8.4, height = 5.5;
-  const post = new THREE.BoxGeometry(0.6, height, 0.6);
+  const across = ROAD_HALF + KERB + 1.2, height = 7;
+  const post = new THREE.BoxGeometry(0.8, height, 0.8);
   const mat = flat(COLORS.gate);
   for (const side of [-1, 1]) {
     const p = new THREE.Mesh(post, mat);
@@ -99,14 +99,14 @@ function buildArch(g: Gate, finish: boolean): THREE.Group {
   const bannerMat = finish
     ? new THREE.MeshLambertMaterial({ map: checkerTexture() })
     : new THREE.MeshLambertMaterial({ color: COLORS.carAccent });
-  const banner = new THREE.Mesh(new THREE.BoxGeometry(0.5, 1.2, across * 2 + 0.6), bannerMat);
+  const banner = new THREE.Mesh(new THREE.BoxGeometry(0.6, 1.6, across * 2 + 0.8), bannerMat);
   banner.position.y = height;
   banner.name = 'banner';
   arch.add(banner);
   arch.position.set(g.center[0], g.center[1] - 2, g.center[2]);
   arch.rotation.y = (g.r * Math.PI) / 2;
   if (finish) {
-    const line = new THREE.Mesh(new THREE.PlaneGeometry(2, 14), new THREE.MeshBasicMaterial({ map: checkerTexture(7) }));
+    const line = new THREE.Mesh(new THREE.PlaneGeometry(2.5, (ROAD_HALF + KERB) * 2), new THREE.MeshBasicMaterial({ map: checkerTexture(10) }));
     line.rotation.x = -Math.PI / 2;
     line.rotation.z = Math.PI / 2;
     line.position.y = 0.02;
@@ -140,14 +140,14 @@ export function buildCanyon(c: CompiledTrack): THREE.Group {
     minZ = Math.min(minZ, p[2]); maxZ = Math.max(maxZ, p[2]);
   }
   const cx = (minX + maxX) / 2, cz = (minZ + maxZ) / 2;
-  const radius = Math.max(maxX - minX, maxZ - minZ) / 2 + 60;
+  const radius = Math.max(maxX - minX, maxZ - minZ) / 2 + 90;
   const rand = rng(1234);
   const mats = [flat(COLORS.rockA), flat(COLORS.rockB), flat(COLORS.rockC)];
-  for (let i = 0; i < 90; i++) {
+  for (let i = 0; i < 120; i++) {
     const angle = rand() * Math.PI * 2;
-    const dist = radius + rand() * 260;
-    const r = 8 + rand() * 22;
-    const h = 20 + rand() * 90;
+    const dist = radius + rand() * 400;
+    const r = 12 + rand() * 34;
+    const h = 30 + rand() * 130;
     const geo = new THREE.CylinderGeometry(r * (0.4 + rand() * 0.4), r, h, 5 + Math.floor(rand() * 3), 2);
     const pos = geo.attributes.position!;
     for (let v = 0; v < pos.count; v++) {
@@ -161,7 +161,7 @@ export function buildCanyon(c: CompiledTrack): THREE.Group {
     group.add(m);
   }
   // Fond du canyon, loin en dessous
-  const floor = new THREE.Mesh(new THREE.CircleGeometry(radius + 400, 24), flat(COLORS.rockB));
+  const floor = new THREE.Mesh(new THREE.CircleGeometry(radius + 600, 24), flat(COLORS.rockB));
   floor.rotation.x = -Math.PI / 2;
   floor.position.set(cx, -70, cz);
   group.add(floor);

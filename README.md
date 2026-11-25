@@ -37,7 +37,7 @@ Si le comportement de la voiture change, incrémenter `SIM_VERSION` puis régén
 
 ## Circuits
 
-Un circuit est une liste de pièces posées bout à bout sur une grille de 20 m (`packages/shared/src/tracks.ts`). Pièces disponibles (`pieces.ts`) : `start`, `straight`, `checkpoint`, `finish`, `turnL/R` (rayon 10 m), `sweepL/R` (rayon 30 m, option `bank` pour un virage relevé, `ride` pour un mur roulable à l'extérieur), `chicaneL/R`, `hairpinL/R`, `slopeUp/Down`, `kicker` (tremplin) et `gap` (vide à sauter). Option `barrier` pour une rambarde à gauche, à droite ou des deux côtés.
+Un circuit est une liste de pièces posées bout à bout sur une grille de 40 m (route de 20 m de large) (`packages/shared/src/tracks.ts`). Pièces disponibles (`pieces.ts`) : `start`, `straight`, `checkpoint`, `finish`, `turnL/R` (rayon 20 m), `sweepL/R` (rayon 60 m, option `bank` pour un virage relevé, `ride` pour un mur roulable à l'extérieur), `chicaneL/R`, `hairpinL/R`, `slopeUp/Down` (sur 2 cases), `kicker` (tremplin) et `gap` (petit vide, réception en pente). Option `barrier` pour une rambarde à gauche, à droite ou des deux côtés.
 
 Le chrono démarre à la première touche. Une chute ramène au dernier checkpoint, le chrono continue. Toute la géométrie utilise les tables de `trig.ts` au lieu de `Math.sin/cos`, pour rester identique sur tous les appareils.
 

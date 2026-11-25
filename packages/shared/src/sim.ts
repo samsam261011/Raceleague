@@ -11,7 +11,7 @@ import { fnv1a, hex } from './hash.ts';
  * - toute la physique passe par la version déterministe de Rapier.
  * Changer le comportement de la voiture => incrémenter SIM_VERSION.
  */
-export const SIM_VERSION = 2;
+export const SIM_VERSION = 4;
 export const TICK_RATE = 60;
 export const DT = 1 / TICK_RATE;
 /** Une run qui dure plus longtemps est arrêtée (5 minutes). */
@@ -24,11 +24,12 @@ export function initPhysics(): Promise<void> {
   return ready;
 }
 
-/** Réglages de la voiture (à affiner en semaine 2). */
+/** Réglages de la voiture. */
 export const CAR = {
   halfExtents: [1.1, 0.3, 0.6] as const,
   mass: 150,
-  centerOfMassY: -0.45,
+  /** Centre de gravité très bas : peu de roulis, la voiture reste à plat dans les virages. */
+  centerOfMassY: -0.72,
   /** Inertie (roulis, lacet, tangage) d'une boîte de 150 kg. */
   inertia: { x: 22.5, y: 78.5, z: 65 },
   wheelRadius: 0.38,
@@ -37,20 +38,28 @@ export const CAR = {
   wheelZ: 0.62,
   wheelY: -0.15,
   suspensionRest: 0.3,
-  suspensionStiffness: 40,
-  suspensionCompression: 4,
-  suspensionRelaxation: 5,
+  suspensionStiffness: 55,
+  suspensionCompression: 6,
+  suspensionRelaxation: 8,
   maxSuspensionForce: 100000,
   frictionSlip: 4,
   sideFrictionStiffness: 1.2,
-  engineForce: 1500,
+  /** Force moteur à l'arrêt ; elle baisse quand la vitesse monte (accélération progressive). */
+  engineForce: 900,
+  engineFade: 0.75,
   reverseForce: 700,
-  brakeForce: 60,
-  /** Braquage max à l'arrêt (rad), réduit avec la vitesse. */
+  brakeForce: 14,
+  /**
+   * Braquage max à l'arrêt (rad). Il baisse comme 1 / (1 + v²/steerSpeed²) :
+   * à haute vitesse, l'accélération latérale plafonne vers 2,5 g, la voiture
+   * prend les virages sans pivoter sur place.
+   */
   steerMax: 0.5,
-  steerSpeedFalloff: 25,
+  steerSpeed: 9,
   /** Vitesse de rotation du volant, en rad par pas. */
-  steerRate: 0.06,
+  steerRate: 0.04,
+  /** Retour du volant au centre, plus rapide que le braquage. */
+  steerReturn: 0.08,
   maxSpeed: 45,
   /**
    * Adhérence aux parois (virages relevés, murs roulables) : quand les roues
@@ -62,6 +71,11 @@ export const CAR = {
   /** En dessous de ce cosinus de pente (≈ 25°), la surface compte comme une paroi. */
   stickMaxNormalY: 0.9,
   gravity: -20,
+  /** Appui aérodynamique : accélération vers le bas ∝ vitesse², au sol seulement. */
+  downforce: 0.006,
+  /** En l'air : la voiture se remet doucement à plat (raideur, amortissement). */
+  airLevel: 10,
+  airDamp: 4,
 } as const;
 
 const FRONT_LEFT = 0, FRONT_RIGHT = 1;
@@ -180,7 +194,7 @@ export class Simulation {
 
     let engine = 0;
     let brake = 0;
-    if (up && !down) engine = speed < CAR.maxSpeed ? CAR.engineForce : 0;
+    if (up && !down) engine = speed < CAR.maxSpeed ? CAR.engineForce * (1 - (CAR.engineFade * (speed > 0 ? speed : 0)) / CAR.maxSpeed) : 0;
     else if (down && !up) {
       if (speed > 1) brake = CAR.brakeForce;
       else engine = -CAR.reverseForce;
@@ -188,10 +202,11 @@ export class Simulation {
 
     // Braquage progressif, réduit avec la vitesse (uniquement + − × ÷).
     const absSpeed = speed < 0 ? -speed : speed;
-    const maxSteer = CAR.steerMax / (1 + absSpeed / CAR.steerSpeedFalloff);
+    const maxSteer = CAR.steerMax / (1 + (absSpeed * absSpeed) / (CAR.steerSpeed * CAR.steerSpeed));
     const target = left === right ? 0 : left ? maxSteer : -maxSteer;
-    if (this.steer < target) this.steer = Math.min(target, this.steer + CAR.steerRate);
-    else if (this.steer > target) this.steer = Math.max(target, this.steer - CAR.steerRate);
+    const rate = target === 0 || (target > 0) !== (this.steer > 0) ? CAR.steerReturn : CAR.steerRate;
+    if (this.steer < target) this.steer = Math.min(target, this.steer + rate);
+    else if (this.steer > target) this.steer = Math.max(target, this.steer - rate);
 
     v.setWheelSteering(FRONT_LEFT, this.steer);
     v.setWheelSteering(FRONT_RIGHT, this.steer);
@@ -200,6 +215,7 @@ export class Simulation {
 
     v.updateVehicle(DT);
     this.stick(absSpeed);
+    this.aero(absSpeed);
     this.world.step();
     this.tick++;
 
@@ -240,6 +256,31 @@ export class Simulation {
     if (ny > CAR.stickMaxNormalY) return;
     const k = -CAR.mass * CAR.stickAccel * DT;
     this.body.applyImpulse({ x: nx * k, y: ny * k, z: nz * k }, true);
+  }
+
+  /** Appui au sol, et remise à plat douce en l'air (uniquement + − × ÷). */
+  private aero(absSpeed: number): void {
+    let contacts = 0;
+    for (let i = 0; i < 4; i++) if (this.vehicle.wheelIsInContact(i)) contacts++;
+    const r = this.body.rotation();
+    // Axe « haut » de la voiture
+    const ux = 2 * (r.x * r.y - r.w * r.z);
+    const uy = 1 - 2 * (r.x * r.x + r.z * r.z);
+    const uz = 2 * (r.y * r.z + r.w * r.x);
+    if (contacts > 0) {
+      const k = -CAR.mass * CAR.downforce * absSpeed * absSpeed * DT;
+      this.body.applyImpulse({ x: ux * k, y: uy * k, z: uz * k }, true);
+      return;
+    }
+    // Couple qui ramène l'axe haut vers la verticale : haut × Y = (−uz, 0, ux)
+    const a = this.body.angvel();
+    const k = CAR.airLevel * DT, d = CAR.airDamp * DT;
+    const I = CAR.inertia;
+    this.body.applyTorqueImpulse({
+      x: (-uz * k - a.x * d) * I.x,
+      y: 0,
+      z: (ux * k - a.z * d) * I.z,
+    }, true);
   }
 
   /** Après une chute : retour au dernier checkpoint franchi, à l'arrêt. Le chrono continue. */

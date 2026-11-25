@@ -4,7 +4,7 @@ import { COS, SIN, SQRT_HALF } from './trig.ts';
  * Pièces modulaires et assemblage des circuits.
  *
  * Un circuit est une chaîne de pièces : chaque pièce commence là où la
- * précédente s'arrête. Les pièces sont posées sur une grille de 20 m et
+ * précédente s'arrête. Les pièces sont posées sur une grille de 40 m et
  * tournent uniquement par quarts de tour, ce qui garde toute la géométrie
  * exacte (pas de Math.sin/cos : on utilise les tables de trig.ts).
  *
@@ -12,15 +12,20 @@ import { COS, SIN, SQRT_HALF } from './trig.ts';
  * la gauche est −Z, le haut +Y.
  */
 
-export const CELL = 20;
+export const CELL = 40;
 /** Demi-largeur de la chaussée (hors vibreurs), en mètres. */
-export const ROAD_HALF = 6;
-export const KERB = 1;
-const LINE = 0.3;
-const BARRIER_H = 1;
+export const ROAD_HALF = 10;
+export const KERB = 1.5;
+const LINE = 0.4;
+const BARRIER_H = 1.2;
 /** Rayon et hauteur du mur roulable. */
-const RIDE_R = 6;
+const RIDE_R = 9;
 const RIDE_TOP = 4;
+/** Tremplin et saut : hauteur de la lèvre, longueur du vide, réception. */
+const KICK = 0.6;
+const GAP_VOID = 8;
+const GAP_TOP = -1.2;
+const GAP_DROP = 3;
 
 export type PieceType =
   | 'start' | 'straight' | 'checkpoint' | 'finish'
@@ -93,34 +98,45 @@ function arcLeft(cx: number, cz: number, r: number, i0: number, i1: number, step
 function shapeOf(t: PieceType): PieceShape {
   switch (t) {
     case 'start': case 'straight': case 'checkpoint': case 'finish':
-      return { samples: line(CELL, 8, () => 0), exit: { x: CELL, y: 0, z: 0, dr: 0 }, outer: 0, straight: true };
+      return { samples: line(CELL, 10, () => 0), exit: { x: CELL, y: 0, z: 0, dr: 0 }, outer: 0, straight: true };
     case 'slopeUp':
-      return { samples: line(CELL, 10, (u) => 4 * u * u * (3 - 2 * u)), exit: { x: CELL, y: 4, z: 0, dr: 0 }, outer: 0, straight: true };
+      // Sur deux cases : assez douce pour ne pas décoller en haut à pleine vitesse
+      return { samples: line(2 * CELL, 16, (u) => 6 * u * u * (3 - 2 * u)), exit: { x: 2 * CELL, y: 6, z: 0, dr: 0 }, outer: 0, straight: true };
     case 'slopeDown':
-      return { samples: line(CELL, 10, (u) => -4 * u * u * (3 - 2 * u)), exit: { x: CELL, y: -4, z: 0, dr: 0 }, outer: 0, straight: true };
+      return { samples: line(2 * CELL, 16, (u) => -6 * u * u * (3 - 2 * u)), exit: { x: 2 * CELL, y: -6, z: 0, dr: 0 }, outer: 0, straight: true };
     case 'kicker':
+      // Petit tremplin doux : plat sur la première moitié, lèvre de KICK m (pente de sortie ≈ 3,5°)
       return {
-        samples: line(CELL, 10, (u) => (u <= 0.5 ? 0 : 1.5 * (2 * u - 1) * (2 * u - 1))),
-        exit: { x: CELL, y: 1.5, z: 0, dr: 0 }, outer: 0, straight: true,
+        samples: line(CELL, 12, (u) => (u <= 0.5 ? 0 : KICK * (2 * u - 1) * (2 * u - 1))),
+        exit: { x: CELL, y: KICK, z: 0, dr: 0 }, outer: 0, straight: true,
       };
-    case 'gap':
-      return { samples: [], exit: { x: CELL, y: -3.5, z: 0, dr: 0 }, outer: 0, straight: true };
+    case 'gap': {
+      // Trou de GAP_VOID m, puis piste de réception en descente : on atterrit
+      // en glissant le long de la pente plutôt qu'en tapant à plat.
+      const s: Sample[] = [];
+      const L = CELL - GAP_VOID;
+      for (let i = 0; i <= 10; i++) {
+        const u = i / 10;
+        s.push({ x: GAP_VOID + L * u, y: GAP_TOP - GAP_DROP * (1 - (1 - u) * (1 - u)), z: 0, fx: 1, fz: 0 });
+      }
+      return { samples: s, exit: { x: CELL, y: GAP_TOP - GAP_DROP, z: 0, dr: 0 }, outer: 0, straight: true };
+    }
     case 'turnL':
-      // Rayon 10 m : on sort au milieu du bord gauche de la case
-      return { samples: arcLeft(0, -10, 10, 0, 12, 1), exit: { x: 10, y: 0, z: -10, dr: 1 }, outer: -1, straight: false };
+      // Rayon 20 m : on sort au milieu du bord gauche de la case
+      return { samples: arcLeft(0, -20, 20, 0, 12, 1), exit: { x: 20, y: 0, z: -20, dr: 1 }, outer: -1, straight: false };
     case 'sweepL':
-      // Grand virage de rayon 30 m sur 2 × 2 cases
-      return { samples: arcLeft(0, -30, 30, 0, 12, 1), exit: { x: 30, y: 0, z: -30, dr: 1 }, outer: -1, straight: false };
+      // Grand virage de rayon 60 m sur 2 × 2 cases
+      return { samples: arcLeft(0, -60, 60, 0, 12, 1), exit: { x: 60, y: 0, z: -60, dr: 1 }, outer: -1, straight: false };
     case 'hairpinL': {
-      // 10 m tout droit, demi-tour de rayon 10 m, 10 m tout droit dans l'autre sens
+      // 20 m tout droit, demi-tour de rayon 20 m, 20 m tout droit dans l'autre sens
       const s: Sample[] = [{ x: 0, y: 0, z: 0, fx: 1, fz: 0 }];
-      s.push(...arcLeft(10, -10, 10, 0, 24, 1));
-      s.push({ x: 0, y: 0, z: -20, fx: -1, fz: 0 });
-      return { samples: s, exit: { x: 0, y: 0, z: -20, dr: 2 }, outer: -1, straight: false };
+      s.push(...arcLeft(20, -20, 20, 0, 24, 1));
+      s.push({ x: 0, y: 0, z: -40, fx: -1, fz: 0 });
+      return { samples: s, exit: { x: 0, y: 0, z: -40, dr: 2 }, outer: -1, straight: false };
     }
     case 'chicaneL': {
-      // Décalage de 6 m vers la gauche puis retour dans l'axe, sur 40 m
-      const A = 6, L = 2 * CELL, K = (Math.PI * A) / L;
+      // Décalage de 10 m vers la gauche puis retour dans l'axe, sur 80 m
+      const A = 10, L = 2 * CELL, K = (Math.PI * A) / L;
       const s: Sample[] = [];
       for (let i = 0; i <= 48; i += 2) {
         const dz = -K * SIN[i]!;
@@ -147,8 +163,9 @@ function profile(piece: Piece, shape: PieceShape, i: number, n: number): { pts: 
   const E = ROAD_HALF + KERB;
   const left = piece.barrier === 'left' || piece.barrier === 'both';
   const right = piece.barrier === 'right' || piece.barrier === 'both';
-  // Montée progressive du mur roulable et du dévers en entrée et sortie de virage
-  const ramp = (Math.min(i, n - i, 2) + 0.2) / 2.2;
+  // Montée progressive (lissée) du mur roulable et du dévers en entrée et sortie de virage
+  const t = Math.min(i, n - i, 4) / 4;
+  const ramp = 0.1 + 0.9 * t * t * (3 - 2 * t);
   const rideL = piece.ride && shape.outer === 1;
   const rideR = piece.ride && shape.outer === -1;
 
@@ -180,8 +197,12 @@ function profile(piece: Piece, shape: PieceShape, i: number, n: number): { pts: 
 
   // Dévers : on penche le profil autour de l'axe, extérieur vers le haut (jusqu'à 15°)
   if (piece.bank && shape.outer !== 0) {
-    const k = Math.min(i, n - i, 2); // 0°, 7,5° ou 15°
-    const c = COS[k]!, s = SIN[k]! * shape.outer; // outer = −1 : la droite monte
+    // Angle de 0 à 15° (2 crans de la table), interpolé puis renormalisé
+    const f = 2 * t * t * (3 - 2 * t);
+    const k = f >= 2 ? 1 : Math.floor(f), w = f - k;
+    let c = COS[k]! * (1 - w) + COS[k + 1]! * w, s = SIN[k]! * (1 - w) + SIN[k + 1]! * w;
+    const len = Math.sqrt(c * c + s * s);
+    c /= len; s = (s / len) * shape.outer; // outer = −1 : la droite monte
     for (const p of pts) {
       const u = p.u, v = p.v;
       p.u = u * c - v * s;

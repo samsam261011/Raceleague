@@ -14,8 +14,8 @@ import { BOT_STYLES, driveBot } from './bot.ts';
 
 await initPhysics();
 const plan = [
-  { name: 'Mesa (avec une chute)', track: MESA, style: BOT_STYLES.rapide! },
-  { name: 'Épingle (saut)', track: EPINGLE, style: BOT_STYLES.rapide! },
+  { name: 'Mesa', track: MESA, style: BOT_STYLES.rapide! },
+  { name: 'Épingle (saut raté puis réussi)', track: EPINGLE, style: BOT_STYLES.tombeur! },
   { name: 'Falaise (virages relevés)', track: FALAISE, style: BOT_STYLES.prudent! },
 ];
 const fixtures = plan.map(({ name, track, style }) => {
@@ -24,4 +24,4 @@ const fixtures = plan.map(({ name, track, style }) => {
 });
 const out = fileURLToPath(new URL('../fixtures/replays.json', import.meta.url));
 writeFileSync(out, JSON.stringify({ simVersion: SIM_VERSION, fixtures }) + '\n');
-for (const f of fixtures) console.log(f.name.padEnd(28), f.expected.timeMs ?? 'pas fini', 'chutes', f.expected.respawns, f.expected.stateHash);
+for (const f of fixtures) console.log(f.name.padEnd(34), f.expected.timeMs ?? 'pas fini', 'chutes', f.expected.respawns, f.expected.stateHash);

@@ -17,6 +17,8 @@ export interface BotStyle {
   caution: number;
   /** Tolérance d'angle avant de tourner. */
   deadzone: number;
+  /** Vitesse plafonnée jusqu'à la première chute (pour rater un saut exprès). */
+  capUntilFall?: number;
   /** Nombre max de pas, pour un replay volontairement coupé. */
   maxTicks?: number;
 }
@@ -65,7 +67,8 @@ export function driveBot(track: Track, style: BotStyle): BotRun {
     const ax = far[0] - p[0], az = far[2] - p[2];
     const alen = Math.hypot(ax, az) || 1;
     const ahead = (fx * ax + fz * az) / alen;
-    const target = style.topSpeed * (0.35 + 0.65 * Math.max(0, ahead) ** 3);
+    let target = style.topSpeed * (0.35 + 0.65 * Math.max(0, ahead) ** 3);
+    if (style.capUntilFall && sim.respawns === 0) target = Math.min(target, style.capUntilFall);
     let keys: Keys = 0;
     if (cross > style.deadzone) keys |= KEY_LEFT;
     else if (cross < -style.deadzone) keys |= KEY_RIGHT;
@@ -87,8 +90,10 @@ export function driveBot(track: Track, style: BotStyle): BotRun {
 }
 
 export const BOT_STYLES: Record<string, BotStyle> = {
-  rapide: { lookahead: 8, topSpeed: 42, caution: 0.6, deadzone: 0.02 },
-  prudent: { lookahead: 8, topSpeed: 30, caution: 0.9, deadzone: 0.04 },
+  rapide: { lookahead: 14, topSpeed: 42, caution: 0.6, deadzone: 0.02 },
+  prudent: { lookahead: 14, topSpeed: 30, caution: 0.9, deadzone: 0.04 },
+  // Trop lent au premier saut : tombe dans le vide, réapparaît, puis passe.
+  tombeur: { lookahead: 14, topSpeed: 42, caution: 0.6, deadzone: 0.02, capUntilFall: 12 },
   // Zigzag coupé avant la fin : vérifie aussi les collisions et les chutes.
   zigzag: { lookahead: 2, topSpeed: 45, caution: 0, deadzone: 0, maxTicks: 900 },
 };
