@@ -1,5 +1,6 @@
 import { SIM_VERSION, Simulation, TICK_RATE } from './sim.ts';
-import { trackHash, type Track } from './track.ts';
+import { trackHash } from './track.ts';
+import type { Track } from './pieces.ts';
 import type { Keys } from './input.ts';
 
 /**
@@ -43,10 +44,12 @@ export class ReplayRecorder {
 }
 
 export interface ReplayResult {
+  /** Temps final en pas (depuis la première touche), null si pas fini. */
   finishTick: number | null;
   /** Temps en millisecondes, arrondi au millième de seconde. */
   timeMs: number | null;
-  fell: boolean;
+  respawns: number;
+  splits: number[];
   ticks: number;
   stateHash: string;
 }
@@ -69,9 +72,10 @@ export function runReplay(replay: Replay, track: Track): ReplayResult {
     sim.step(keys);
   }
   const result: ReplayResult = {
-    finishTick: sim.finishTick,
-    timeMs: sim.finishTick === null ? null : ticksToMs(sim.finishTick),
-    fell: sim.fell,
+    finishTick: sim.finalTicks,
+    timeMs: sim.finalTicks === null ? null : ticksToMs(sim.finalTicks),
+    respawns: sim.respawns,
+    splits: sim.splits.slice(),
     ticks: sim.tick,
     stateHash: sim.stateHash(),
   };

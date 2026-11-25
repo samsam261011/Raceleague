@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { CAR, type Track } from '@raceleague/shared';
+import { CAR, type CompiledTrack, type Gate, type Mat } from '@raceleague/shared';
 
 /** Palette canyon. Tout est généré en code : aucun fichier de modèle. */
 export const COLORS = {
@@ -9,12 +9,15 @@ export const COLORS = {
   line: 0xf4ede4,
   kerbRed: 0xd6402e,
   kerbWhite: 0xf4ede4,
+  ride: 0xc98d5e,
+  rideStripe: 0xe6c39a,
   rockA: 0xb4562f,
   rockB: 0x8f3f22,
   rockC: 0xcf7a45,
   carBody: 0x1f6fd1,
+  carAccent: 0xff7a2f,
   carDark: 0x16181d,
-  finish: 0xffffff,
+  gate: 0x2a2220,
 };
 
 /** Générateur pseudo-aléatoire à graine : le décor est identique à chaque chargement. */
@@ -27,56 +30,92 @@ function rng(seed: number) {
 
 const flat = (color: number) => new THREE.MeshLambertMaterial({ color, flatShading: true });
 
-export function buildTrack(track: Track): THREE.Group {
-  const scene = new THREE.Group();
-  for (const b of track.blocks) {
-    const geo = new THREE.BoxGeometry(b.half[0] * 2, b.half[1] * 2, b.half[2] * 2);
-    let mat: THREE.Material;
-    if (b.kind === 'road') mat = flat(COLORS.asphalt);
-    else mat = kerbMaterial(b.half[0] > b.half[2] ? b.half[0] * 2 : b.half[2] * 2);
-    const m = new THREE.Mesh(geo, mat);
-    m.position.set(...b.center);
-    m.receiveShadow = true;
-    m.castShadow = b.kind === 'wall';
-    scene.add(m);
-    if (b.kind === 'road') {
-      // Bloc de roche sous la piste : la piste est posée sur un plateau au-dessus du vide
-      const base = new THREE.Mesh(new THREE.BoxGeometry(b.half[0] * 2 + 2, 14, b.half[2] * 2 + 2), flat(COLORS.rockB));
-      base.position.set(b.center[0], b.center[1] - b.half[1] - 7, b.center[2]);
-      scene.add(base);
+/** Couleur d'un quadrilatère : les vibreurs et rambardes alternent rouge et blanc. */
+function quadColor(mat: Mat, stripe: number, out: THREE.Color): THREE.Color {
+  switch (mat) {
+    case 'road': return out.setHex(COLORS.asphalt);
+    case 'line': return out.setHex(COLORS.line);
+    case 'kerb': case 'barrier': return out.setHex(stripe % 2 ? COLORS.kerbWhite : COLORS.kerbRed);
+    case 'ride': return out.setHex(stripe % 4 === 0 ? COLORS.rideStripe : COLORS.ride);
+    case 'rock': return out.setHex(COLORS.rockB);
+  }
+}
+
+export interface TrackView {
+  group: THREE.Group;
+  /** Arches des checkpoints et de l'arrivée, dans l'ordre (pour les allumer au passage). */
+  arches: THREE.Group[];
+}
+
+export function buildTrack(c: CompiledTrack): TrackView {
+  const group = new THREE.Group();
+  const pos: number[] = [];
+  const col: number[] = [];
+  const color = new THREE.Color();
+  for (const strip of c.render) {
+    for (let q = 0, s = 0; q < strip.quads.length; q += 12, s++) {
+      const v = strip.quads;
+      // Deux triangles par quadrilatère : 0-1-2 et 0-2-3
+      for (const k of [0, 1, 2, 0, 2, 3]) pos.push(v[q + k * 3]!, v[q + k * 3 + 1]!, v[q + k * 3 + 2]!);
+      quadColor(strip.mat, strip.stripe[s]!, color).convertSRGBToLinear();
+      for (let k = 0; k < 6; k++) col.push(color.r, color.g, color.b);
     }
   }
-  // Ligne d'arrivée en damier
-  const f = track.finish;
-  const tex = checkerTexture();
-  tex.repeat.set(f.half[0], 1);
-  const finish = new THREE.Mesh(new THREE.PlaneGeometry(f.half[0] * 2, 2), new THREE.MeshBasicMaterial({ map: tex }));
-  finish.rotation.x = -Math.PI / 2;
-  finish.position.set(f.center[0], 0.01, f.center[2]);
-  scene.add(finish);
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  geo.computeVertexNormals();
+  const mesh = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide, flatShading: true }));
+  mesh.receiveShadow = true;
+  group.add(mesh);
+
   // Ligne de départ
-  const start = new THREE.Mesh(new THREE.PlaneGeometry(1, 20), new THREE.MeshBasicMaterial({ color: COLORS.line }));
-  start.rotation.x = -Math.PI / 2;
-  start.position.set(track.start[0] - 2, 0.01, track.start[2]);
-  scene.add(start);
-  return scene;
+  const s = c.start;
+  const startLine = new THREE.Mesh(new THREE.PlaneGeometry(1, 14), new THREE.MeshBasicMaterial({ color: COLORS.line }));
+  startLine.rotation.set(-Math.PI / 2, 0, (s.r * Math.PI) / 2);
+  startLine.position.set(s.p[0], s.p[1] - 0.79, s.p[2]);
+  group.add(startLine);
+
+  const arches = c.gates.map((g, i) => {
+    const a = buildArch(g, i === c.gates.length - 1);
+    group.add(a);
+    return a;
+  });
+  return { group, arches };
 }
 
-function kerbMaterial(length: number) {
-  const c = document.createElement('canvas');
-  c.width = 64; c.height = 8;
-  const g = c.getContext('2d')!;
-  g.fillStyle = '#d6402e'; g.fillRect(0, 0, 32, 8);
-  g.fillStyle = '#f4ede4'; g.fillRect(32, 0, 32, 8);
-  const tex = new THREE.CanvasTexture(c);
-  tex.wrapS = THREE.RepeatWrapping;
-  tex.repeat.set(length / 4, 1);
-  tex.magFilter = THREE.NearestFilter;
-  tex.colorSpace = THREE.SRGBColorSpace;
-  return new THREE.MeshLambertMaterial({ map: tex });
+/** Arche au-dessus d'une porte : poteaux et bandeau (damier pour l'arrivée). */
+function buildArch(g: Gate, finish: boolean): THREE.Group {
+  const arch = new THREE.Group();
+  const across = 8.4, height = 5.5;
+  const post = new THREE.BoxGeometry(0.6, height, 0.6);
+  const mat = flat(COLORS.gate);
+  for (const side of [-1, 1]) {
+    const p = new THREE.Mesh(post, mat);
+    p.position.set(0, height / 2, side * across);
+    p.castShadow = true;
+    arch.add(p);
+  }
+  const bannerMat = finish
+    ? new THREE.MeshLambertMaterial({ map: checkerTexture() })
+    : new THREE.MeshLambertMaterial({ color: COLORS.carAccent });
+  const banner = new THREE.Mesh(new THREE.BoxGeometry(0.5, 1.2, across * 2 + 0.6), bannerMat);
+  banner.position.y = height;
+  banner.name = 'banner';
+  arch.add(banner);
+  arch.position.set(g.center[0], g.center[1] - 2, g.center[2]);
+  arch.rotation.y = (g.r * Math.PI) / 2;
+  if (finish) {
+    const line = new THREE.Mesh(new THREE.PlaneGeometry(2, 14), new THREE.MeshBasicMaterial({ map: checkerTexture(7) }));
+    line.rotation.x = -Math.PI / 2;
+    line.rotation.z = Math.PI / 2;
+    line.position.y = 0.02;
+    arch.add(line);
+  }
+  return arch;
 }
 
-function checkerTexture() {
+function checkerTexture(repeat = 8) {
   const c = document.createElement('canvas');
   c.width = 16; c.height = 16;
   const g = c.getContext('2d')!;
@@ -86,20 +125,27 @@ function checkerTexture() {
   }
   const tex = new THREE.CanvasTexture(c);
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(repeat, 1);
   tex.magFilter = THREE.NearestFilter;
   tex.colorSpace = THREE.SRGBColorSpace;
   return tex;
 }
 
 /** Pitons rocheux low-poly autour du circuit. */
-export function buildCanyon(scene: THREE.Scene) {
+export function buildCanyon(c: CompiledTrack): THREE.Group {
+  const group = new THREE.Group();
+  let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+  for (const p of c.centerline) {
+    minX = Math.min(minX, p[0]); maxX = Math.max(maxX, p[0]);
+    minZ = Math.min(minZ, p[2]); maxZ = Math.max(maxZ, p[2]);
+  }
+  const cx = (minX + maxX) / 2, cz = (minZ + maxZ) / 2;
+  const radius = Math.max(maxX - minX, maxZ - minZ) / 2 + 60;
   const rand = rng(1234);
   const mats = [flat(COLORS.rockA), flat(COLORS.rockB), flat(COLORS.rockC)];
   for (let i = 0; i < 90; i++) {
     const angle = rand() * Math.PI * 2;
-    const dist = 140 + rand() * 260;
-    const x = 70 + Math.cos(angle) * dist;
-    const z = 60 + Math.sin(angle) * dist;
+    const dist = radius + rand() * 260;
     const r = 8 + rand() * 22;
     const h = 20 + rand() * 90;
     const geo = new THREE.CylinderGeometry(r * (0.4 + rand() * 0.4), r, h, 5 + Math.floor(rand() * 3), 2);
@@ -110,38 +156,58 @@ export function buildCanyon(scene: THREE.Scene) {
     }
     geo.computeVertexNormals();
     const m = new THREE.Mesh(geo, mats[i % 3]);
-    m.position.set(x, h / 2 - 60 + rand() * 30, z);
+    m.position.set(cx + Math.cos(angle) * dist, h / 2 - 60 + rand() * 30, cz + Math.sin(angle) * dist);
     m.rotation.y = rand() * Math.PI;
-    scene.add(m);
+    group.add(m);
   }
+  // Fond du canyon, loin en dessous
+  const floor = new THREE.Mesh(new THREE.CircleGeometry(radius + 400, 24), flat(COLORS.rockB));
+  floor.rotation.x = -Math.PI / 2;
+  floor.position.set(cx, -70, cz);
+  group.add(floor);
+  return group;
 }
 
+/** Voiture monoplace low-poly, originale : nez en pointe, pontons, ailerons. */
 export function buildCar() {
   const car = new THREE.Group();
-  const [hx, hy, hz] = CAR.halfExtents;
-  const body = new THREE.Mesh(new THREE.BoxGeometry(hx * 2, hy * 1.4, hz * 2), flat(COLORS.carBody));
-  body.position.y = -0.05;
-  body.castShadow = true;
-  car.add(body);
-  const nose = new THREE.Mesh(new THREE.BoxGeometry(0.7, hy * 0.8, hz * 1.2), flat(COLORS.carBody));
-  nose.position.set(hx + 0.3, -0.12, 0);
-  car.add(nose);
-  const cabin = new THREE.Mesh(new THREE.BoxGeometry(hx * 0.8, hy * 1.2, hz * 1.4), flat(COLORS.carDark));
-  cabin.position.set(-0.15, hy * 0.9, 0);
-  cabin.castShadow = true;
-  car.add(cabin);
-  const wing = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.08, hz * 2.2), flat(COLORS.carDark));
-  wing.position.set(-hx + 0.1, hy + 0.25, 0);
-  car.add(wing);
+  const body = flat(COLORS.carBody);
+  const accent = flat(COLORS.carAccent);
+  const dark = flat(COLORS.carDark);
+  const add = (geo: THREE.BufferGeometry, mat: THREE.Material, x: number, y: number, z: number) => {
+    const m = new THREE.Mesh(geo, mat);
+    m.position.set(x, y, z);
+    m.castShadow = true;
+    car.add(m);
+    return m;
+  };
+
+  // Coque centrale et nez en coin
+  add(new THREE.BoxGeometry(1.6, 0.34, 0.62), body, -0.05, -0.06, 0);
+  const noseGeo = new THREE.CylinderGeometry(0.06, 0.3, 1.0, 4, 1);
+  noseGeo.rotateZ(-Math.PI / 2);
+  noseGeo.rotateX(Math.PI / 4);
+  noseGeo.scale(1, 0.6, 1);
+  add(noseGeo, body, 1.2, -0.1, 0);
+  // Pontons latéraux
+  for (const side of [-1, 1]) add(new THREE.BoxGeometry(0.95, 0.26, 0.26), body, -0.2, -0.1, side * 0.42);
+  // Cockpit et arceau
+  add(new THREE.BoxGeometry(0.55, 0.2, 0.42), dark, 0.1, 0.18, 0);
+  add(new THREE.BoxGeometry(0.18, 0.32, 0.18), accent, -0.3, 0.26, 0);
+  // Aileron avant et arrière
+  add(new THREE.BoxGeometry(0.32, 0.05, 1.5), accent, 1.55, -0.28, 0);
+  add(new THREE.BoxGeometry(0.34, 0.06, 1.3), accent, -1.05, 0.42, 0);
+  for (const side of [-1, 1]) add(new THREE.BoxGeometry(0.34, 0.4, 0.04), dark, -1.05, 0.24, side * 0.63);
+  // Bande de couleur sur la coque
+  add(new THREE.BoxGeometry(1.0, 0.02, 0.2), accent, 0.4, 0.12, 0);
 
   const wheels: THREE.Group[] = [];
-  const wheelGeo = new THREE.CylinderGeometry(CAR.wheelRadius, CAR.wheelRadius, 0.32, 10);
+  const wheelGeo = new THREE.CylinderGeometry(CAR.wheelRadius, CAR.wheelRadius, 0.34, 10);
   wheelGeo.rotateX(Math.PI / 2);
-  const wheelMat = flat(COLORS.carDark);
   for (const [x, z] of [[CAR.wheelX, -CAR.wheelZ], [CAR.wheelX, CAR.wheelZ], [-CAR.wheelX, -CAR.wheelZ], [-CAR.wheelX, CAR.wheelZ]] as const) {
     const pivot = new THREE.Group();
     pivot.position.set(x, CAR.wheelY, z);
-    const w = new THREE.Mesh(wheelGeo, wheelMat);
+    const w = new THREE.Mesh(wheelGeo, dark);
     w.castShadow = true;
     pivot.add(w);
     car.add(pivot);

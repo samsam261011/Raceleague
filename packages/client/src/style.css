@@ -18,7 +18,18 @@ html, body {
   text-align: center; pointer-events: none; text-shadow: 0 2px 6px rgba(0,0,0,.5);
 }
 #timer { font-size: clamp(28px, 6vw, 48px); font-weight: 800; font-variant-numeric: tabular-nums; letter-spacing: .02em; }
-#speed { font-size: 16px; color: var(--ink-dim); font-variant-numeric: tabular-nums; }
+#speed, #cp { font-size: 16px; color: var(--ink-dim); font-variant-numeric: tabular-nums; }
+#split {
+  margin-top: 6px; display: inline-block; padding: 4px 12px; border-radius: 8px; font-size: 22px; font-weight: 800;
+  font-variant-numeric: tabular-nums; background: var(--panel);
+}
+#split.ahead { background: #1f8a3a; }
+#split.behind { background: #c0392b; }
+#start-hint {
+  position: fixed; top: 38%; left: 50%; transform: translateX(-50%); padding: 10px 18px; border-radius: 10px;
+  background: var(--panel); font-weight: 700; pointer-events: none; text-align: center;
+}
+body.in-menu #start-hint { display: none !important; }
 #mode { position: fixed; top: 14px; left: 16px; padding: 4px 10px; border-radius: 6px; background: var(--accent); font-weight: 700; font-size: 13px; }
 #help { position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%); color: var(--ink-dim); font-size: 13px; pointer-events: none; white-space: nowrap; }
 #debug-link { color: var(--ink-dim); font-size: 12px; margin-top: 8px; }
@@ -42,7 +53,7 @@ body.in-menu #hud, body.in-menu #touch, body.in-menu #help, body.in-menu .ui-btn
 .pad.right button { width: 96px; }
 .pad button.on { background: var(--btn-active); }
 #finish { position: fixed; inset: 0; display: grid; place-items: center; background: rgba(20, 10, 6, 0.35); }
-#finish[hidden], #mode[hidden], #focus-hint[hidden], .screen[hidden], .panel[hidden] { display: none; }
+#finish[hidden], #mode[hidden], #focus-hint[hidden], #start-hint[hidden], #split[hidden], .screen[hidden], .panel[hidden] { display: none; }
 .card { background: var(--panel); padding: 24px 28px; border-radius: 16px; text-align: center; min-width: min(320px, calc(100vw - 32px)); max-width: calc(100vw - 32px); }
 .card .label { color: var(--ink-dim); text-transform: uppercase; letter-spacing: .12em; font-size: 13px; }
 #finish-time { font-size: 44px; font-weight: 800; font-variant-numeric: tabular-nums; margin: 4px 0; }

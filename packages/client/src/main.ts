@@ -1,19 +1,17 @@
 import * as THREE from 'three';
 import {
-  CAR, DT, formatTime, initPhysics, ReplayRecorder, Simulation, TEST_TRACK, ticksToMs, trackHash,
+  CAR, compileTrack, DT, formatTime, initPhysics, ReplayRecorder, Simulation, ticksToMs, trackHash, TRACKS,
   type Keys, type Pose, type Replay, type Track,
 } from '@raceleague/shared';
 import { Input } from './input.ts';
 import { Menu, type TrackEntry } from './menu.ts';
-import { loadSettings, readNumber, saveSettings, writeNumber, type Settings } from './settings.ts';
-import { buildCanyon, buildCar, buildTrack, COLORS } from './world.ts';
+import { loadSettings, readBest, saveSettings, writeBest, type Best, type Settings } from './settings.ts';
+import { buildCanyon, buildCar, buildTrack, COLORS, type TrackView } from './world.ts';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const bestKey = (t: Track) => `raceleague.best.${t.id}.${trackHash(t)}`;
 
-/** Circuits jouables. Les vrais circuits arrivent dans la suite de la semaine 2. */
-const TRACKS: Track[] = [TEST_TRACK];
-const COMING_SOON = ['Circuit 1', 'Circuit 2'];
+const fmtDelta = (ms: number) => `${ms < 0 ? '−' : '+'}${formatTime(Math.abs(ms)).replace(/^0:0?/, '')}`;
 
 const settings = loadSettings();
 
@@ -31,10 +29,10 @@ sun.shadow.mapSize.set(1024, 1024);
 Object.assign(sun.shadow.camera, { left: -30, right: 30, top: 30, bottom: -30, near: 1, far: 120 });
 scene.add(sun, sun.target);
 
-buildCanyon(scene);
 const { car, wheels } = buildCar();
 scene.add(car);
-let trackMesh: THREE.Group | null = null;
+let trackView: TrackView | null = null;
+let canyon: THREE.Group | null = null;
 
 function resize() {
   const w = innerWidth, h = innerHeight;
@@ -67,13 +65,20 @@ let accumulator = 0;
 let lastTime = performance.now();
 let finished = false;
 let snapCamera = true;
+let best: Best | null = null;
+let shownSplits = 0;
+let splitTimer = 0;
 
 function loadTrack(t: Track) {
   track = t;
-  if (trackMesh) scene.remove(trackMesh);
-  trackMesh = buildTrack(t);
-  scene.add(trackMesh);
+  const compiled = compileTrack(t);
+  if (trackView) scene.remove(trackView.group);
+  if (canyon) scene.remove(canyon);
+  trackView = buildTrack(compiled);
+  canyon = buildCanyon(compiled);
+  scene.add(trackView.group, canyon);
   lastReplay = null;
+  best = readBest(bestKey(t));
 }
 
 function reset(watch: Replay | null = null) {
@@ -87,30 +92,45 @@ function reset(watch: Replay | null = null) {
   finished = false;
   $('finish').hidden = true;
   $('mode').hidden = !watch;
+  $('split').hidden = true;
+  shownSplits = 0;
   snapCamera = true;
 }
 
 function onFinish() {
   finished = true;
   if (recorder) lastReplay = recorder.finish();
-  const ms = sim.finishTick !== null ? ticksToMs(sim.finishTick) : null;
-  $('finish-time').textContent = ms === null ? (sim.fell ? 'Chute' : 'Temps écoulé') : formatTime(ms);
+  const t = sim.finalTicks;
+  const ms = t !== null ? ticksToMs(t) : null;
+  $('finish-time').textContent = ms === null ? 'Temps écoulé' : formatTime(ms);
   const bestEl = $('finish-best');
   bestEl.className = '';
-  bestEl.textContent = '';
+  bestEl.textContent = sim.respawns ? `${sim.respawns} chute${sim.respawns > 1 ? 's' : ''}` : '';
   if (ms !== null && !watching) {
-    const best = readNumber(bestKey(track));
-    if (best === null || ms < best) {
-      bestEl.textContent = best === null ? 'Premier temps !' : `Nouveau record (−${formatTime(best - ms)})`;
+    if (best === null || ms < best.time) {
+      bestEl.textContent = best === null ? 'Premier temps !' : `Nouveau record (${fmtDelta(ms - best.time)})`;
       bestEl.className = 'record';
-      writeNumber(bestKey(track), ms);
+      best = { time: ms, splits: sim.splits.map(ticksToMs) };
+      writeBest(bestKey(track), best);
     } else {
-      bestEl.textContent = `Record : ${formatTime(best)} (+${formatTime(ms - best)})`;
+      bestEl.textContent = `Record : ${formatTime(best.time)} (${fmtDelta(ms - best.time)})`;
     }
   }
   $('btn-watch').hidden = !lastReplay;
   $('btn-download').hidden = !lastReplay;
   $('finish').hidden = false;
+}
+
+/** Écart au checkpoint, en vert si on est en avance sur son record. */
+function showSplit() {
+  const i = sim.splits.length - 1;
+  const ms = ticksToMs(sim.splits[i]!);
+  const el = $('split');
+  const ref = best?.splits[i];
+  el.textContent = ref === undefined ? formatTime(ms) : fmtDelta(ms - ref);
+  el.className = ref === undefined ? '' : ms <= ref ? 'ahead' : 'behind';
+  el.hidden = false;
+  splitTimer = 2;
 }
 
 function stepOnce() {
@@ -124,8 +144,11 @@ function stepOnce() {
     recorder!.record(sim.tick, keys);
   }
   prev = curr;
+  const respawns = sim.respawns;
   sim.step(keys);
   curr = sim.chassisPose();
+  if (sim.respawns !== respawns) { prev = curr; snapCamera = true; }
+  if (sim.splits.length > shownSplits) { shownSplits = sim.splits.length; showSplit(); }
   if (sim.done || (watching && sim.tick >= watching.replay.ticks)) onFinish();
 }
 
@@ -137,10 +160,7 @@ const menu = new Menu(
     onSettings: (s) => { saveSettings(s); applySettings(s); },
   },
   settings,
-  (): TrackEntry[] => [
-    ...TRACKS.map((t) => ({ track: t, name: t.name, best: readNumber(bestKey(t)) })),
-    ...COMING_SOON.map((name) => ({ track: null, name, best: null })),
-  ],
+  (): TrackEntry[] => TRACKS.map((t) => ({ track: t, name: t.name, best: readBest(bestKey(t))?.time ?? null })),
 );
 
 function openMenu() { menu.setOpen(true); }
@@ -232,8 +252,11 @@ function frame(now: number) {
   sun.position.copy(pos).add(new THREE.Vector3(30, 60, 20));
   sun.target.position.copy(pos);
 
-  const ms = ticksToMs(sim.finishTick ?? sim.tick);
-  $('timer').textContent = formatTime(ms);
+  $('timer').textContent = formatTime(ticksToMs(sim.raceTicks));
+  const gates = sim.compiled.gates.length - 1;
+  $('cp').textContent = gates > 0 ? `Checkpoint ${Math.min(sim.checkpoint, gates)}/${gates}` : '';
+  $('start-hint').hidden = sim.startTick !== null || menu.open || !!watching;
+  if (splitTimer > 0 && (splitTimer -= elapsed) <= 0) $('split').hidden = true;
   $('speed').textContent = `${Math.round(Math.abs(sim.speed) * 3.6)} km/h`;
   renderer.render(scene, camera);
 }

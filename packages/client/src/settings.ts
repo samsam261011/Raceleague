@@ -20,10 +20,21 @@ export function saveSettings(s: Settings): void {
   try { localStorage.setItem(KEY, JSON.stringify(s)); } catch { /* ignore */ }
 }
 
-export function readNumber(key: string): number | null {
-  try { return Number(localStorage.getItem(key)) || null; } catch { return null; }
+/** Record d'un circuit : temps final et temps de passage aux checkpoints, en ms. */
+export interface Best {
+  time: number;
+  splits: number[];
 }
 
-export function writeNumber(key: string, value: number): void {
-  try { localStorage.setItem(key, String(value)); } catch { /* ignore */ }
+export function readBest(key: string): Best | null {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const b = JSON.parse(raw) as Best;
+    return typeof b.time === 'number' ? b : null;
+  } catch { return null; }
+}
+
+export function writeBest(key: string, value: Best): void {
+  try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* ignore */ }
 }

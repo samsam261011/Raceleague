@@ -1,5 +1,5 @@
 import RAPIER from '@dimforge/rapier3d-deterministic-compat';
-import type { Track } from './track.ts';
+import { compileTrack, headingQuat, type CompiledTrack, type Track } from './pieces.ts';
 import { KEY_DOWN, KEY_LEFT, KEY_RIGHT, KEY_UP, type Keys } from './input.ts';
 import { fnv1a, hex } from './hash.ts';
 
@@ -11,7 +11,7 @@ import { fnv1a, hex } from './hash.ts';
  * - toute la physique passe par la version déterministe de Rapier.
  * Changer le comportement de la voiture => incrémenter SIM_VERSION.
  */
-export const SIM_VERSION = 1;
+export const SIM_VERSION = 2;
 export const TICK_RATE = 60;
 export const DT = 1 / TICK_RATE;
 /** Une run qui dure plus longtemps est arrêtée (5 minutes). */
@@ -52,6 +52,15 @@ export const CAR = {
   /** Vitesse de rotation du volant, en rad par pas. */
   steerRate: 0.06,
   maxSpeed: 45,
+  /**
+   * Adhérence aux parois (virages relevés, murs roulables) : quand les roues
+   * touchent une surface penchée et que la voiture va assez vite, elle est
+   * plaquée contre la surface. Sans effet sur le plat.
+   */
+  stickMinSpeed: 12,
+  stickAccel: 12,
+  /** En dessous de ce cosinus de pente (≈ 25°), la surface compte comme une paroi. */
+  stickMaxNormalY: 0.9,
   gravity: -20,
 } as const;
 
@@ -64,33 +73,42 @@ export interface Pose {
 
 export class Simulation {
   readonly track: Track;
+  readonly compiled: CompiledTrack;
   tick = 0;
-  /** Numéro du pas où la voiture est entrée dans l'arrivée, sinon null. */
+  /** Pas de la première touche : le chrono démarre là. Null tant qu'on n'a rien touché. */
+  startTick: number | null = null;
+  /** Pas de l'arrivée (compté depuis le début de la simulation), sinon null. */
   finishTick: number | null = null;
-  fell = false;
+  /** Temps de passage à chaque checkpoint, en pas depuis le départ du chrono. */
+  splits: number[] = [];
+  /** Nombre de chutes (retour au dernier checkpoint). */
+  respawns = 0;
 
   private world: RAPIER.World;
   private body: RAPIER.RigidBody;
   private vehicle: RAPIER.DynamicRayCastVehicleController;
   private steer = 0;
+  private nextGate = 0;
 
   constructor(track: Track) {
     this.track = track;
+    const c = (this.compiled = compileTrack(track));
     const world = new RAPIER.World({ x: 0, y: CAR.gravity, z: 0 });
     world.timestep = DT;
     this.world = world;
 
-    for (const b of track.blocks) {
-      const desc = RAPIER.ColliderDesc.cuboid(b.half[0], b.half[1], b.half[2])
-        .setTranslation(b.center[0], b.center[1], b.center[2])
-        .setFriction(b.kind === 'road' ? 1 : 0.2);
-      world.createCollider(desc);
-    }
+    world.createCollider(
+      RAPIER.ColliderDesc.trimesh(
+        c.vertices, c.indices,
+        RAPIER.TriMeshFlags.DELETE_DEGENERATE_TRIANGLES,
+      ).setFriction(1),
+    );
 
-    const [sx, sy, sz] = track.start;
+    const [sx, sy, sz] = c.start.p;
     this.body = world.createRigidBody(
       RAPIER.RigidBodyDesc.dynamic()
         .setTranslation(sx, sy, sz)
+        .setRotation(headingQuat(c.start.r))
         .setCcdEnabled(true)
         .setLinearDamping(0.05)
         .setAngularDamping(1.5),
@@ -125,7 +143,23 @@ export class Simulation {
   }
 
   get done(): boolean {
-    return this.finishTick !== null || this.fell || this.tick >= MAX_TICKS;
+    return this.finishTick !== null || this.tick >= MAX_TICKS;
+  }
+
+  /** Nombre de checkpoints franchis (l'arrivée n'en fait pas partie). */
+  get checkpoint(): number {
+    return this.nextGate;
+  }
+
+  /** Temps de course en pas (0 tant que le chrono n'a pas démarré). */
+  get raceTicks(): number {
+    if (this.startTick === null) return 0;
+    return (this.finishTick ?? this.tick) - this.startTick;
+  }
+
+  /** Temps final en pas, ou null si la course n'est pas finie. */
+  get finalTicks(): number | null {
+    return this.finishTick === null || this.startTick === null ? null : this.finishTick - this.startTick;
   }
 
   /** Vitesse vers l'avant, en m/s. */
@@ -136,6 +170,7 @@ export class Simulation {
   /** Avance la simulation d'un pas de 1/60 s avec les touches données. */
   step(keys: Keys): void {
     if (this.done) return;
+    if (this.startTick === null && keys !== 0) this.startTick = this.tick;
     const v = this.vehicle;
     const speed = v.currentVehicleSpeed();
     const up = (keys & KEY_UP) !== 0;
@@ -164,20 +199,65 @@ export class Simulation {
     for (let i = 0; i < 4; i++) v.setWheelBrake(i, brake);
 
     v.updateVehicle(DT);
+    this.stick(absSpeed);
     this.world.step();
     this.tick++;
 
     const p = this.body.translation();
-    if (p.y < -20) this.fell = true;
-    const f = this.track.finish;
-    if (
-      this.finishTick === null &&
-      Math.abs(p.x - f.center[0]) <= f.half[0] &&
-      Math.abs(p.y - f.center[1]) <= f.half[1] &&
-      Math.abs(p.z - f.center[2]) <= f.half[2]
-    ) {
-      this.finishTick = this.tick;
+    if (p.y < this.compiled.fallY) {
+      this.respawn();
+      return;
     }
+    const gates = this.compiled.gates;
+    const g = gates[this.nextGate];
+    if (
+      g &&
+      this.startTick !== null &&
+      Math.abs(p.x - g.center[0]) <= g.half[0] &&
+      Math.abs(p.y - g.center[1]) <= g.half[1] &&
+      Math.abs(p.z - g.center[2]) <= g.half[2]
+    ) {
+      if (this.nextGate === gates.length - 1) this.finishTick = this.tick;
+      else this.splits.push(this.tick - this.startTick);
+      this.nextGate++;
+    }
+  }
+
+  /** Plaque la voiture contre une paroi penchée quand elle va assez vite. */
+  private stick(absSpeed: number): void {
+    if (absSpeed < CAR.stickMinSpeed) return;
+    let nx = 0, ny = 0, nz = 0, count = 0;
+    for (let i = 0; i < 4; i++) {
+      if (!this.vehicle.wheelIsInContact(i)) continue;
+      const n = this.vehicle.wheelContactNormal(i);
+      if (!n) continue;
+      nx += n.x; ny += n.y; nz += n.z; count++;
+    }
+    if (count < 2) return;
+    const len = Math.sqrt(nx * nx + ny * ny + nz * nz);
+    if (len === 0) return;
+    nx /= len; ny /= len; nz /= len;
+    if (ny > CAR.stickMaxNormalY) return;
+    const k = -CAR.mass * CAR.stickAccel * DT;
+    this.body.applyImpulse({ x: nx * k, y: ny * k, z: nz * k }, true);
+  }
+
+  /** Après une chute : retour au dernier checkpoint franchi, à l'arrêt. Le chrono continue. */
+  private respawn(): void {
+    this.respawns++;
+    const c = this.compiled;
+    let p: [number, number, number], r: number;
+    if (this.nextGate === 0) {
+      p = c.start.p; r = c.start.r;
+    } else {
+      const g = c.gates[this.nextGate - 1]!;
+      p = [g.center[0], g.center[1] - 2 + 0.8, g.center[2]]; r = g.r;
+    }
+    this.body.setTranslation({ x: p[0], y: p[1], z: p[2] }, true);
+    this.body.setRotation(headingQuat(r), true);
+    this.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+    this.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+    this.steer = 0;
   }
 
   chassisPose(): Pose {
@@ -203,7 +283,7 @@ export class Simulation {
     const l = this.body.linvel();
     const a = this.body.angvel();
     const f = new Float32Array([t.x, t.y, t.z, r.x, r.y, r.z, r.w, l.x, l.y, l.z, a.x, a.y, a.z, this.steer]);
-    const i = new Int32Array([this.tick, this.finishTick ?? -1, this.fell ? 1 : 0]);
+    const i = new Int32Array([this.tick, this.startTick ?? -1, this.finishTick ?? -1, this.respawns, this.nextGate]);
     return hex(fnv1a(new Uint8Array(i.buffer), fnv1a(new Uint8Array(f.buffer))));
   }
 

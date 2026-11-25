@@ -1,4 +1,4 @@
-import { formatTime, type Track } from '@raceleague/shared';
+import { compileTrack, formatTime, type Track } from '@raceleague/shared';
 import type { Settings } from './settings.ts';
 
 export interface TrackEntry {
@@ -90,17 +90,21 @@ export class Menu {
   }
 }
 
-/** Petit plan du circuit vu de dessus, dessiné à partir de ses blocs de route. */
+/** Petit plan du circuit vu de dessus, dessiné à partir de sa ligne centrale. */
 function trackSvg(track: Track): string {
-  const roads = track.blocks.filter((b) => b.kind === 'road');
+  const line = compileTrack(track).centerline;
   let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
-  for (const b of roads) {
-    minX = Math.min(minX, b.center[0] - b.half[0]); maxX = Math.max(maxX, b.center[0] + b.half[0]);
-    minZ = Math.min(minZ, b.center[2] - b.half[2]); maxZ = Math.max(maxZ, b.center[2] + b.half[2]);
+  for (const p of line) {
+    minX = Math.min(minX, p[0]); maxX = Math.max(maxX, p[0]);
+    minZ = Math.min(minZ, p[2]); maxZ = Math.max(maxZ, p[2]);
   }
-  const rects = roads.map((b) =>
-    `<rect x="${b.center[0] - b.half[0]}" y="${b.center[2] - b.half[2]}" width="${b.half[0] * 2}" height="${b.half[2] * 2}" fill="#3b3433"/>`).join('');
-  const f = track.finish;
-  const finish = `<rect x="${f.center[0] - f.half[0]}" y="${f.center[2] - f.half[2]}" width="${f.half[0] * 2}" height="${f.half[2] * 2}" fill="#fff6ec"/>`;
-  return `<svg viewBox="${minX} ${minZ} ${maxX - minX} ${maxZ - minZ}" preserveAspectRatio="xMidYMid meet" aria-hidden="true">${rects}${finish}</svg>`;
+  const pad = 10;
+  const pts = line.map((p) => `${p[0].toFixed(1)},${p[2].toFixed(1)}`).join(' ');
+  const end = line[line.length - 1]!;
+  return `<svg viewBox="${minX - pad} ${minZ - pad} ${maxX - minX + 2 * pad} ${maxZ - minZ + 2 * pad}" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+    <polyline points="${pts}" fill="none" stroke="#3b3433" stroke-width="14" stroke-linejoin="round"/>
+    <polyline points="${pts}" fill="none" stroke="#fff6ec" stroke-width="2" stroke-dasharray="6 6"/>
+    <circle cx="${line[0]![0]}" cy="${line[0]![2]}" r="6" fill="#ff7a2f"/>
+    <circle cx="${end[0]}" cy="${end[2]}" r="6" fill="#fff6ec"/>
+  </svg>`;
 }
